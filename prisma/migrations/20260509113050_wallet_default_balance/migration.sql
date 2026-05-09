@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Wallet` MODIFY `balance` DECIMAL(10, 2) NOT NULL DEFAULT 0;

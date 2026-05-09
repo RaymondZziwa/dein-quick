@@ -11,7 +11,7 @@ import {
   CreateEventDto,
   CreateEventParticipantDto,
   UpdateEventDto,
-  UpdateParticipantDto,
+  //UpdateParticipantDto,
 } from 'src/dto/event.dto';
 import { EventsService } from './event.service';
 
@@ -25,7 +25,7 @@ export class EventsController {
     return this.eventsService.create(createEventDto);
   }
 
-  @Get()
+  @Get('all')
   async findAllEvents() {
     return this.eventsService.findAll();
   }
@@ -72,16 +72,16 @@ export class EventsController {
     return this.eventsService.getParticipant(participantId);
   }
 
-  @Patch('participants/modify/:participantId')
-  async updateParticipant(
-    @Param('participantId') participantId: string,
-    @Body() updateParticipantDto: UpdateParticipantDto,
-  ) {
-    return this.eventsService.updateParticipant(
-      participantId,
-      updateParticipantDto,
-    );
-  }
+  // @Patch('participants/modify/:participantId')
+  // async updateParticipant(
+  //   @Param('participantId') participantId: string,
+  //   @Body() updateParticipantDto: UpdateParticipantDto,
+  // ) {
+  //   return this.eventsService.updateParticipant(
+  //     participantId,
+  //     updateParticipantDto,
+  //   );
+  // }
 
   @Delete(':eventId/participants/:participantId')
   async removeParticipant(

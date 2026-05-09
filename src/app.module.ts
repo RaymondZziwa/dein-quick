@@ -18,6 +18,7 @@ import { BranchExpenseModule } from './expenses/expenses.module';
 import { PosModule } from './sales/pos/pos.module';
 import { ReportsModule } from './reports/reports.module';
 import { MassagePosModule } from './sales/massage/massagepos.module';
+import { FinanceModule } from './finance/finance.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { MassagePosModule } from './sales/massage/massagepos.module';
     PosModule,
     ReportsModule,
     MassagePosModule,
+    FinanceModule,
   ],
 })
 export class AppModule {}

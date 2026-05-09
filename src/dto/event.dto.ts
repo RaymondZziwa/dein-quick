@@ -31,6 +31,11 @@ export class CreateEventDto {
   @IsString()
   @IsOptional()
   location?: string;
+
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  capacity: number;
 }
 
 export class UpdateEventDto extends PartialType(CreateEventDto) {}
@@ -51,6 +56,10 @@ export class CreateEventParticipantDto {
   @IsString()
   @IsOptional()
   tel2?: string;
+
+  @IsString()
+  @IsOptional()
+  email?: string;
 
   @IsNumber()
   @IsPositive()

@@ -5,6 +5,7 @@ import { defaultRoles } from './seed/roles';
 import { defaultUser } from './seed/super_user';
 import { defaultCompany } from './seed/defaultCompany';
 import { unitsOfMeasurement } from './seed/unitsOfMeasurement';
+//import { seedDefaultWallet } from './seed/defaultWallet';
 
 const prisma = new PrismaClient();
 
@@ -123,6 +124,7 @@ async function main() {
   await seedUsers();
   await seedCompany();
   await seedUnits();
+  //await seedDefaultWallet(prisma);
 
   console.log('✅ All seed operations completed successfully');
 }

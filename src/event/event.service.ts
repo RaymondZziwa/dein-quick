@@ -5,14 +5,20 @@ import {
   CreateEventDto,
   CreateEventParticipantDto,
   UpdateEventDto,
-  UpdateParticipantDto,
 } from 'src/dto/event.dto';
 import { GenericResponse } from 'src/utils/genericResponse';
-import { Decimal } from '@prisma/client/runtime/library';
+import { generateReservationCode, generateTicketCode } from 'src/utils/ticketCodeGenerator';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { EventPaymentStatus } from '@prisma/client';
 
 @Injectable()
 export class EventsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
 
   // Event CRUD Operations
   async create(createEventDto: CreateEventDto): Promise<GenericResponse> {
@@ -23,6 +29,7 @@ export class EventsService {
         startDate: new Date(createEventDto.startDate),
         endDate: new Date(createEventDto.endDate),
         ticketPrice: createEventDto.ticketPrice,
+        capacity: createEventDto.capacity,
         location: createEventDto.location,
       },
     });
@@ -118,44 +125,134 @@ export class EventsService {
 
   // Participant Management
   async addParticipant(eventId: string, data: CreateEventParticipantDto) {
-    // Check if event exists
-    const event = await this.prisma.event.findUnique({
-      where: { id: eventId },
-    });
+    return await this.prisma.$transaction(async (tx) => {
+      // Check if event exists
+      const event = await tx.event.findUnique({
+        where: { id: eventId },
+      });
 
-    if (!event) {
-      throw new NotFoundException(`Event with ID ${eventId} not found`);
-    }
+      if (!event) {
+        throw new NotFoundException(`Event with ID ${eventId} not found`);
+      }
 
-    const newParticipant = await this.prisma.eventParticipant.create({
-      data: {
-        firstName: data.firstName,
-        lastName: data.lastName,
-        tel: data.tel,
-        tel2: data.tel2 || '',
-        amountPaid: 0,
-        balance: event.ticketPrice,
-        eventId: eventId,
-        paymentStatus: data.paymentStatus,
-      },
-      include: {
-        event: {
-          select: {
-            title: true,
-            startDate: true,
-            endDate: true,
+      // Create participant
+      const newParticipant = await tx.eventParticipant.create({
+        data: {
+          firstName: data.firstName,
+          lastName: data.lastName,
+          tel: data.tel,
+          tel2: data.tel2 || '',
+          email: data.email || '',
+          reservationCode: generateReservationCode(),
+          eventId,
+        },
+        include: {
+          event: {
+            select: {
+              title: true,
+              startDate: true,
+              endDate: true,
+            },
           },
         },
-      },
+      });
+
+      const ticketPrice = Number(event.ticketPrice);
+      const amountPaid = Number(data.amountPaid);
+
+      // If no payment made, return participant only
+      if (amountPaid <= 0) {
+        return {
+          status: 201,
+          data: newParticipant,
+          message:
+            'Participant registered successfully. No ticket generated because no payment was made.',
+        };
+      }
+
+      // Determine payment status
+      const paymentStatus =
+        amountPaid === ticketPrice
+          ? EventPaymentStatus.PAID
+          : EventPaymentStatus.PARTIALLY_PAID;
+
+      // JWT payload
+      const payload = {
+        sub: newParticipant.id,
+        firstName: newParticipant.firstName,
+        lastName: newParticipant.lastName,
+        event: event.title,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        paymentStatus,
+      };
+
+      // Generate token
+      const ticketToken = this.jwtService.sign(payload, {
+        secret: this.configService.get<string>('JWT_SECRET'),
+        expiresIn: '500d',
+      });
+
+      // Create ticket
+      const ticket = await tx.ticket.create({
+        data: {
+          eventId,
+          participantId: newParticipant.id,
+          amountPaid,
+          balance: ticketPrice - amountPaid,
+          ticketcode: generateTicketCode(),
+          ticketToken,
+          paymentStatus,
+        },
+      });
+
+      // Update event statistics
+      const updatedTicketsSold = event.ticketsSold + 1;
+      const updatedRevenue = ticketPrice * updatedTicketsSold;
+
+      await tx.event.update({
+        where: {
+          id: eventId,
+        },
+        data: {
+          ticketsSold: updatedTicketsSold,
+          totalRevenue: updatedRevenue,
+          balance: {
+            increment: amountPaid,
+          },
+        },
+      });
+
+      // Create payment record
+      await tx.ticketPayments.create({
+        data: {
+          ticketId: ticket.id,
+          amount: amountPaid,
+          paymentMethod: 'CASH',
+          paymentDate: new Date(),
+        },
+      });
+
+      const wallet = await this.prisma.wallet.findFirst();
+      await tx.wallet.update({
+        where: { id: wallet?.id },
+        data: {
+          balance: {
+            increment: amountPaid,
+          },
+        },
+      });
+
+      return {
+        status: 201,
+        data: {
+          participant: newParticipant,
+          ticket,
+        },
+        message: 'Participant registered and ticket generated successfully',
+      };
     });
-
-    return {
-      status: 201,
-      data: newParticipant,
-      message: 'Participant saved successfully',
-    };
   }
-
   async getEventParticipants(eventId: string) {
     // Check if event exists
     const event = await this.prisma.event.findUnique({
@@ -203,63 +300,66 @@ export class EventsService {
     return participant;
   }
 
-  async updateParticipant(
-    participantId: string,
-    updateParticipantDto: UpdateParticipantDto,
-  ) {
-    try {
-      // 1. Fetch existing participant
-      const participant = await this.prisma.eventParticipant.findUnique({
-        where: { id: participantId },
-      });
+  async makePayment() { }
+  async checkReservation() { }
+  async verifyTicket() { }
 
-      if (!participant) {
-        throw new NotFoundException(
-          `Participant with ID ${participantId} not found`,
-        );
-      }
+  // async updateParticipant(
+  //   participantId: string,
+  //   updateParticipantDto: UpdateParticipantDto,
+  // ) {
+  //   try {
+  //     // 1. Fetch existing participant
+  //     const participant = await this.prisma.eventParticipant.findUnique({
+  //       where: { id: participantId },
+  //     });
 
-      // 2. Calculate new total amountPaid
-      const newTotalPaid = new Decimal(participant.amountPaid).plus(
-        new Decimal(updateParticipantDto.amountPaid || 0),
-      );
-      // 3. Determine payment status
-      let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' = 'UNPAID';
+  //     if (!participant) {
+  //       throw new NotFoundException(
+  //         `Participant with ID ${participantId} not found`,
+  //       );
+  //     }
 
-      if (newTotalPaid === participant.balance) {
-        paymentStatus = 'PAID';
-      } else if (
-        newTotalPaid > new Decimal(0) &&
-        newTotalPaid < participant.balance
-      ) {
-        paymentStatus = 'PARTIALLY_PAID';
-      } else {
-        paymentStatus = 'UNPAID';
-      }
+  //     // 2. Calculate new total amountPaid
+  //     const newTotalPaid = new Decimal(participant.amountPaid).plus(
+  //       new Decimal(updateParticipantDto.amountPaid || 0),
+  //     );
+  //     // 3. Determine payment status
+  //     let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' = 'UNPAID';
 
-      // 4. Update DB
-      return await this.prisma.eventParticipant.update({
-        where: { id: participantId },
-        data: {
-          ...updateParticipantDto,
-          amountPaid: newTotalPaid,
-          paymentStatus,
-        },
-        include: {
-          event: {
-            select: {
-              title: true,
-            },
-          },
-        },
-      });
-    } catch (error: any) {
-      if (error) {
-        throw new NotFoundException(error);
-      }
-      throw error;
-    }
-  }
+  //     if (newTotalPaid === participant.balance) {
+  //       paymentStatus = 'PAID';
+  //     } else if (
+  //       newTotalPaid > new Decimal(0) &&
+  //       newTotalPaid < participant.balance
+  //     ) {
+  //       paymentStatus = 'PARTIALLY_PAID';
+  //     } else {
+  //       paymentStatus = 'UNPAID';
+  //     }
+
+  //     // 4. Update DB
+  //     return await this.prisma.eventParticipant.update({
+  //       where: { id: participantId },
+  //       data: {
+  //         ...updateParticipantDto,
+  //         paymentStatus,
+  //       },
+  //       include: {
+  //         event: {
+  //           select: {
+  //             title: true,
+  //           },
+  //         },
+  //       },
+  //     });
+  //   } catch (error: any) {
+  //     if (error) {
+  //       throw new NotFoundException(error);
+  //     }
+  //     throw error;
+  //   }
+  // }
 
   async removeParticipant(participantId: string, eventId: string) {
     const result = await this.prisma.eventParticipant.deleteMany({
